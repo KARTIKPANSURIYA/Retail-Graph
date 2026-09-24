@@ -1,0 +1,13 @@
+schema_version: "1.0"
+experiment: retail_gaze_head_only_smoke
+dataset:
+  name: retail_gaze
+  root: ${RETAILGRAPH_DATA_ROOT}/raw/retail_gaze
+  manifest: configs/retail_gaze_manifest.yaml
+  group_by: [subject_id, session_id]
+model:
+  kind: deterministic_contract_smoke
+seed: 42
+evaluation:
+  point_metric: normalized_euclidean_distance
+  region_metric: accuracy

@@ -1,0 +1,5 @@
+dataset: retail_gaze
+version: unpinned-upstream-review-required
+files:
+  - path: README.md
+    required: true

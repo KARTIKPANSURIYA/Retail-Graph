@@ -1,0 +1,1 @@
+"""RetailGraph data components."""

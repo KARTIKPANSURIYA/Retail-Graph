@@ -1,0 +1,5 @@
+dataset: retail_action
+version: unpinned-source-access-blocked-2026-09-24
+files:
+  - path: README.md
+    required: true
