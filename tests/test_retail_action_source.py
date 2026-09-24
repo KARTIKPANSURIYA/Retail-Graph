@@ -1,0 +1,340 @@
+"""Tests for verified RetailAction upstream converter using synthetic data fixtures."""
+
+import io
+import json
+import tarfile
+from pathlib import Path
+from typing import Any
+
+import pytest
+
+from retailgraph.data.adapters import (
+    load_action_evaluation_manifest,
+    load_retail_action_labels,
+    load_samples,
+)
+from retailgraph.data.integrity import assert_no_group_leakage
+from retailgraph.data.retail_action_source import (
+    PINNED_DATASET_REVISION,
+    RetailActionConversionError,
+    convert_retail_action_split,
+    convert_sample_metadata,
+)
+from retailgraph.schema.records import ActionClass, Split
+
+
+def _make_synthetic_sample_metadata(
+    actions: list[dict[str, Any]],
+    *,
+    start_time: str = "1970-01-01T00:00:00",
+    end_time: str = "1970-01-01T00:00:05",
+) -> dict[str, Any]:
+    """Construct synthetic metadata matching the verified upstream RetailAction schema."""
+    return {
+        "content": {
+            "segment_info": {
+                "sampled_at_start": start_time,
+                "sampled_at_end": end_time,
+            },
+            "action_cam": {
+                "rank0": {
+                    "face_positions": [],
+                    "frame_timestamps": [start_time, end_time],
+                    "sampling_scores": [[start_time, 0.5]],
+                    "poses": [],
+                },
+                "rank1": {
+                    "face_positions": [],
+                    "frame_timestamps": [start_time, end_time],
+                    "sampling_scores": [[start_time, 0.5]],
+                    "poses": [],
+                },
+            },
+            "labels": {
+                "action": actions,
+            },
+        }
+    }
+
+
+def test_convert_single_take_sample() -> None:
+    raw = _make_synthetic_sample_metadata(
+        [
+            {
+                "label": "take",
+                "start": 0.2,
+                "end": 0.8,
+                "spatial": {
+                    "action_cam": {
+                        "rank0": {"x": 0.25, "y": 0.35},
+                        "rank1": {"x": 0.65, "y": 0.75},
+                    }
+                },
+            }
+        ],
+        start_time="1970-01-01T00:00:00",
+        end_time="1970-01-01T00:00:10",
+    )
+    sample, labels = convert_sample_metadata(
+        raw,
+        sample_id="synth-001",
+        split=Split.VALIDATION,
+        revision=PINNED_DATASET_REVISION,
+    )
+
+    assert sample.sample_id == "synth-001"
+    assert sample.provenance.split == Split.VALIDATION
+    assert sample.provenance.version == PINNED_DATASET_REVISION
+    assert len(sample.views) == 2
+    view_ids = {v.view_id for v in sample.views}
+    assert view_ids == {"rank0", "rank1"}
+    assert sample.views[0].width is None
+    assert sample.views[0].height is None
+    assert sample.views[0].fps is None
+
+    assert len(labels) == 1
+    lbl = labels[0]
+    assert lbl.schema_version == "2.0"
+    assert lbl.sample_id == "synth-001"
+    assert lbl.action == ActionClass.TAKE
+    assert lbl.interval.start_s == pytest.approx(2.0)
+    assert lbl.interval.end_s == pytest.approx(8.0)
+    assert len(lbl.points) == 2
+    pt_map = {p.view_id: (p.point.x, p.point.y) for p in lbl.points}
+    assert pt_map["rank0"] == (0.25, 0.35)
+    assert pt_map["rank1"] == (0.65, 0.75)
+
+
+def test_convert_zero_action_sample() -> None:
+    raw = _make_synthetic_sample_metadata([])
+    sample, labels = convert_sample_metadata(
+        raw,
+        sample_id="synth-zero",
+        split=Split.VALIDATION,
+    )
+    assert sample.sample_id == "synth-zero"
+    assert len(labels) == 0
+
+
+def test_convert_multi_action_sample_put_and_touch() -> None:
+    raw = _make_synthetic_sample_metadata(
+        [
+            {
+                "label": "put",
+                "start": 0.1,
+                "end": 0.3,
+                "spatial": {
+                    "action_cam": {
+                        "rank0": {"x": 0.1, "y": 0.2},
+                        "rank1": {"x": 0.3, "y": 0.4},
+                    }
+                },
+            },
+            {
+                "label": "touch",
+                "start": 0.5,
+                "end": 0.9,
+                "spatial": {
+                    "action_cam": {
+                        "rank0": {"x": 0.5, "y": 0.6},
+                        "rank1": {"x": 0.7, "y": 0.8},
+                    }
+                },
+            },
+        ],
+        start_time="1970-01-01T00:00:00",
+        end_time="1970-01-01T00:00:10",
+    )
+    sample, labels = convert_sample_metadata(
+        raw,
+        sample_id="synth-multi",
+        split=Split.TRAIN,
+    )
+    assert sample.sample_id == "synth-multi"
+    assert len(labels) == 2
+    assert labels[0].action == ActionClass.PUT
+    assert labels[0].interval.start_s == pytest.approx(1.0)
+    assert labels[0].interval.end_s == pytest.approx(3.0)
+    assert labels[1].action == ActionClass.TOUCH
+    assert labels[1].interval.start_s == pytest.approx(5.0)
+    assert labels[1].interval.end_s == pytest.approx(9.0)
+
+
+def _create_synthetic_tar(archive_path: Path, samples_data: dict[str, dict[str, Any]]) -> None:
+    """Create a synthetic TAR archive with multiple sample directories."""
+    with tarfile.open(archive_path, "w") as tar:
+        for entry_path, data in samples_data.items():
+            payload_bytes = json.dumps(data).encode("utf-8")
+            ti = tarfile.TarInfo(name=entry_path)
+            ti.size = len(payload_bytes)
+            tar.addfile(ti, io.BytesIO(payload_bytes))
+
+
+def test_convert_synthetic_tar_archive(tmp_path: Path) -> None:
+    tar_path = tmp_path / "validation.tar"
+    samples_data = {
+        "validation/000001/metadata.json": _make_synthetic_sample_metadata(
+            [
+                {
+                    "label": "take",
+                    "start": 0.1,
+                    "end": 0.5,
+                    "spatial": {
+                        "action_cam": {
+                            "rank0": {"x": 0.2, "y": 0.3},
+                            "rank1": {"x": 0.4, "y": 0.5},
+                        }
+                    },
+                }
+            ]
+        ),
+        "validation/000002/metadata.json": _make_synthetic_sample_metadata([]),  # zero action
+        "validation/000003/metadata.json": _make_synthetic_sample_metadata(
+            [
+                {
+                    "label": "put",
+                    "start": 0.2,
+                    "end": 0.4,
+                    "spatial": {
+                        "action_cam": {
+                            "rank0": {"x": 0.1, "y": 0.2},
+                            "rank1": {"x": 0.3, "y": 0.4},
+                        }
+                    },
+                },
+                {
+                    "label": "touch",
+                    "start": 0.6,
+                    "end": 0.8,
+                    "spatial": {
+                        "action_cam": {
+                            "rank0": {"x": 0.5, "y": 0.6},
+                            "rank1": {"x": 0.7, "y": 0.8},
+                        }
+                    },
+                },
+            ]
+        ),
+    }
+    _create_synthetic_tar(tar_path, samples_data)
+
+    out_dir = tmp_path / "converted_val"
+    summary = convert_retail_action_split(tar_path, output_dir=out_dir)
+
+    assert summary.total_samples == 3
+    assert summary.zero_action_sample_count == 1
+    assert summary.samples_with_actions_count == 2
+    assert summary.total_action_count == 3
+    assert summary.counts_by_class == {"take": 1, "put": 1, "touch": 1}
+    assert summary.split == "validation"
+    assert summary.dataset_revision == PINNED_DATASET_REVISION
+
+    # Verify output files can be loaded by standard adapters
+    loaded_samples = load_samples(out_dir / "samples.jsonl")
+    loaded_labels = load_retail_action_labels(out_dir / "labels.jsonl")
+    loaded_manifest = load_action_evaluation_manifest(out_dir / "evaluation_manifest.json")
+
+    assert len(loaded_samples) == 3
+    assert len(loaded_labels) == 3
+    assert loaded_manifest.sample_ids == ["000001", "000002", "000003"]
+    assert "000002" in loaded_manifest.sample_ids  # zero-action sample in manifest!
+    assert_no_group_leakage(loaded_samples)
+
+    report = json.loads((out_dir / "report.json").read_text(encoding="utf-8"))
+    assert report["total_samples"] == 3
+    assert report["zero_action_sample_count"] == 1
+
+
+def test_convert_synthetic_directory(tmp_path: Path) -> None:
+    split_dir = tmp_path / "test"
+    (split_dir / "000010").mkdir(parents=True)
+    (split_dir / "000020").mkdir(parents=True)
+
+    (split_dir / "000010" / "metadata.json").write_text(
+        json.dumps(
+            _make_synthetic_sample_metadata(
+                [
+                    {
+                        "label": "take",
+                        "start": 0.1,
+                        "end": 0.5,
+                        "spatial": {
+                            "action_cam": {
+                                "rank0": {"x": 0.2, "y": 0.3},
+                                "rank1": {"x": 0.4, "y": 0.5},
+                            }
+                        },
+                    }
+                ]
+            )
+        )
+    )
+    (split_dir / "000020" / "metadata.json").write_text(
+        json.dumps(_make_synthetic_sample_metadata([]))
+    )
+
+    out_dir = tmp_path / "converted_dir"
+    summary = convert_retail_action_split(split_dir, output_dir=out_dir)
+    assert summary.total_samples == 2
+    assert summary.split == "test"
+    assert summary.zero_action_sample_count == 1
+    assert summary.total_action_count == 1
+
+
+@pytest.mark.parametrize(
+    ("corrupt_key", "corrupt_val", "expected_match"),
+    [
+        ("content", "not-a-dict", "missing or invalid 'content' dict"),
+        ("segment_info", "not-a-dict", "missing or invalid 'segment_info'"),
+        ("sampled_at_start", "invalid-date", "invalid ISO timestamp"),
+        ("action_cam", {}, "no camera views found in 'action_cam'"),
+        ("action_cam_type", "not-a-dict", "missing or invalid 'action_cam'"),
+        ("labels", [], "missing or invalid 'labels'"),
+        ("label", "unknown_action", "unrecognized action class"),
+        ("start", 0.9, "must satisfy 0.0 <= start < end <= 1.0"),
+        ("x", 1.5, "coordinates out of \\[0, 1\\] range"),
+    ],
+)
+def test_malformed_metadata_rejected_with_useful_error(
+    corrupt_key: str, corrupt_val: Any, expected_match: str
+) -> None:
+    data = _make_synthetic_sample_metadata(
+        [
+            {
+                "label": "take",
+                "start": 0.2,
+                "end": 0.6,
+                "spatial": {
+                    "action_cam": {
+                        "rank0": {"x": 0.5, "y": 0.5},
+                        "rank1": {"x": 0.5, "y": 0.5},
+                    }
+                },
+            }
+        ]
+    )
+
+    if corrupt_key == "content":
+        data["content"] = corrupt_val
+    elif corrupt_key == "segment_info":
+        data["content"]["segment_info"] = corrupt_val
+    elif corrupt_key == "sampled_at_start":
+        data["content"]["segment_info"]["sampled_at_start"] = corrupt_val
+    elif corrupt_key in ("action_cam", "action_cam_type"):
+        data["content"]["action_cam"] = corrupt_val
+    elif corrupt_key == "labels":
+        data["content"]["labels"] = corrupt_val
+    elif corrupt_key == "label":
+        data["content"]["labels"]["action"][0]["label"] = corrupt_val
+    elif corrupt_key == "start":
+        data["content"]["labels"]["action"][0]["start"] = corrupt_val
+    elif corrupt_key == "x":
+        data["content"]["labels"]["action"][0]["spatial"]["action_cam"]["rank0"]["x"] = corrupt_val
+
+    with pytest.raises(RetailActionConversionError, match=expected_match):
+        convert_sample_metadata(
+            data,
+            sample_id="failing-sample",
+            split=Split.VALIDATION,
+            source_ref="test_source.json",
+        )

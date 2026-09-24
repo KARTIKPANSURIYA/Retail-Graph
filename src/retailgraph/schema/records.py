@@ -90,9 +90,9 @@ class TemporalInterval(StrictRecord):
 class CameraView(StrictRecord):
     view_id: str
     video_path: Path
-    width: int = Field(gt=0)
-    height: int = Field(gt=0)
-    fps: float = Field(gt=0)
+    width: int | None = Field(default=None, gt=0)
+    height: int | None = Field(default=None, gt=0)
+    fps: float | None = Field(default=None, gt=0)
     synchronization_group: str | None = None
     time_offset_s: float = 0.0
 
