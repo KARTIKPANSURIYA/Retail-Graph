@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import contextlib
 import datetime
+import hashlib
 import json
 import tarfile
 from collections import Counter
@@ -65,6 +66,7 @@ class ConversionSummary:
     action_count_per_sample_histogram: dict[int, int]
     skipped_count: int
     error_count: int
+    complete: bool  # False when --max-samples was used
     output_paths: dict[str, str]
 
     def to_dict(self) -> dict[str, Any]:
@@ -172,6 +174,12 @@ def convert_sample_metadata(
             sample_id=sample_id,
             source_ref=source_ref,
         )
+    if len(views) < 2:
+        raise RetailActionConversionError(
+            f"at least 2 camera views required, found {len(views)}: {[v.view_id for v in views]}",
+            sample_id=sample_id,
+            source_ref=source_ref,
+        )
 
     provenance = DatasetProvenance(
         dataset=DatasetName.RETAIL_ACTION,
@@ -196,7 +204,14 @@ def convert_sample_metadata(
             source_ref=source_ref,
         )
 
-    raw_actions = labels_container.get("action", [])
+    # Require explicit 'action' key; a missing key is not the same as an empty list.
+    if "action" not in labels_container:
+        raise RetailActionConversionError(
+            "'labels' dict is missing required 'action' key (expected list, even if empty)",
+            sample_id=sample_id,
+            source_ref=source_ref,
+        )
+    raw_actions = labels_container["action"]
     if not isinstance(raw_actions, list):
         raise RetailActionConversionError(
             f"expected 'action' list in labels, got {type(raw_actions).__name__}",
@@ -396,6 +411,17 @@ def iter_directory_sample_metadata(
         yield sample_id, split, payload, str(metadata_path)
 
 
+def _verify_archive_checksum(archive_path: Path, expected_sha256: str, *, source_ref: str) -> None:
+    """Raise RetailActionConversionError if the archive SHA-256 does not match."""
+    actual = hashlib.sha256(archive_path.read_bytes()).hexdigest()
+    if actual != expected_sha256:
+        raise RetailActionConversionError(
+            f"archive checksum mismatch for '{archive_path.name}': "
+            f"expected {expected_sha256!r}, got {actual!r}",
+            source_ref=source_ref,
+        )
+
+
 def convert_retail_action_split(
     source_path: Path,
     output_dir: Path | None = None,
@@ -403,16 +429,30 @@ def convert_retail_action_split(
     split_override: Split | None = None,
     revision: str = PINNED_DATASET_REVISION,
     max_samples: int | None = None,
+    expected_sha256: str | None = None,
 ) -> ConversionSummary:
     """Convert an official RetailAction split archive or directory into normalized contracts.
 
-    Emits samples.jsonl, labels.jsonl, evaluation_manifest.json, and report.json into output_dir.
-    The evaluation sample manifest is derived from all observed sample entries, including zero-action samples.
+    Emits ``samples.jsonl``, ``labels.jsonl``, ``report.json``, and either
+    ``evaluation_manifest.json`` (complete split) or ``inspection_subset.json``
+    (partial run with ``--max-samples``) into *output_dir*.
+
+    Pass ``expected_sha256`` to verify the archive before parsing.
+    The evaluation sample manifest is derived from all observed sample entries,
+    including zero-action samples.
     """
     if not source_path.exists():
         raise FileNotFoundError(f"source path does not exist: {source_path}")
 
+    is_partial = max_samples is not None
+
     if source_path.is_file() and source_path.suffix == ".tar":
+        if expected_sha256 is not None:
+            _verify_archive_checksum(
+                source_path,
+                expected_sha256,
+                source_ref=str(source_path),
+            )
         iterator = iter_archive_sample_metadata(source_path)
     elif source_path.is_dir():
         iterator = iter_directory_sample_metadata(source_path, split_override=split_override)
@@ -472,6 +512,7 @@ def convert_retail_action_split(
         dataset_version=revision,
         split=resolved_split,
         sample_ids=sample_ids,
+        complete=not is_partial,
     )
 
     output_paths: dict[str, str] = {}
@@ -479,7 +520,12 @@ def convert_retail_action_split(
         output_dir.mkdir(parents=True, exist_ok=True)
         samples_file = output_dir / "samples.jsonl"
         labels_file = output_dir / "labels.jsonl"
-        manifest_file = output_dir / "evaluation_manifest.json"
+        # Partial runs write an inspection artifact, not the authoritative manifest,
+        # so that benchmark evaluation cannot accidentally load it as the full split.
+        if is_partial:
+            manifest_file = output_dir / "inspection_subset.json"
+        else:
+            manifest_file = output_dir / "evaluation_manifest.json"
         report_file = output_dir / "report.json"
 
         samples_file.write_text(
@@ -514,6 +560,7 @@ def convert_retail_action_split(
         action_count_per_sample_histogram=dict(sorted(actions_per_sample.items())),
         skipped_count=0,
         error_count=0,
+        complete=not is_partial,
         output_paths=output_paths,
     )
 

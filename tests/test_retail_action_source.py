@@ -338,3 +338,218 @@ def test_malformed_metadata_rejected_with_useful_error(
             split=Split.VALIDATION,
             source_ref="test_source.json",
         )
+
+
+# ---------------------------------------------------------------------------
+# Hardening 1: partial vs complete manifests
+# ---------------------------------------------------------------------------
+
+
+def test_max_samples_writes_inspection_subset_not_evaluation_manifest(tmp_path: Path) -> None:
+    """--max-samples must produce inspection_subset.json, not evaluation_manifest.json."""
+    tar_path = tmp_path / "validation.tar"
+    samples_data = {
+        "validation/000001/metadata.json": _make_synthetic_sample_metadata(
+            [
+                {
+                    "label": "take",
+                    "start": 0.1,
+                    "end": 0.5,
+                    "spatial": {
+                        "action_cam": {
+                            "rank0": {"x": 0.2, "y": 0.3},
+                            "rank1": {"x": 0.4, "y": 0.5},
+                        }
+                    },
+                }
+            ]
+        ),
+        "validation/000002/metadata.json": _make_synthetic_sample_metadata([]),
+        "validation/000003/metadata.json": _make_synthetic_sample_metadata([]),
+    }
+    _create_synthetic_tar(tar_path, samples_data)
+
+    out_dir = tmp_path / "partial_out"
+    summary = convert_retail_action_split(tar_path, output_dir=out_dir, max_samples=1)
+
+    assert summary.complete is False
+    assert summary.total_samples == 1
+    assert (out_dir / "inspection_subset.json").exists(), (
+        "partial run must write inspection_subset.json"
+    )
+    assert not (out_dir / "evaluation_manifest.json").exists(), (
+        "partial run must NOT write evaluation_manifest.json"
+    )
+
+    subset = json.loads((out_dir / "inspection_subset.json").read_text(encoding="utf-8"))
+    assert subset["complete"] is False
+
+
+def test_complete_conversion_writes_evaluation_manifest(tmp_path: Path) -> None:
+    tar_path = tmp_path / "validation.tar"
+    samples_data = {
+        "validation/000001/metadata.json": _make_synthetic_sample_metadata(
+            [
+                {
+                    "label": "take",
+                    "start": 0.1,
+                    "end": 0.5,
+                    "spatial": {
+                        "action_cam": {
+                            "rank0": {"x": 0.2, "y": 0.3},
+                            "rank1": {"x": 0.4, "y": 0.5},
+                        }
+                    },
+                }
+            ]
+        ),
+    }
+    _create_synthetic_tar(tar_path, samples_data)
+
+    out_dir = tmp_path / "complete_out"
+    summary = convert_retail_action_split(tar_path, output_dir=out_dir)
+
+    assert summary.complete is True
+    assert (out_dir / "evaluation_manifest.json").exists()
+    assert not (out_dir / "inspection_subset.json").exists()
+
+    manifest = json.loads((out_dir / "evaluation_manifest.json").read_text(encoding="utf-8"))
+    assert manifest["complete"] is True
+
+
+def test_evaluate_actions_rejects_incomplete_manifest() -> None:
+    """evaluate_actions must raise ValueError when manifest.complete is False."""
+    from retailgraph.evaluation.action import evaluate_actions
+    from retailgraph.schema.records import ActionEvaluationManifest
+
+    partial_manifest = ActionEvaluationManifest(
+        dataset_version="49cb590723db921a4bd5a38adea92f6abd3f7a00",
+        split=Split.VALIDATION,
+        sample_ids=["s1"],
+        complete=False,
+    )
+    with pytest.raises(ValueError, match=r"manifest\.complete is False"):
+        evaluate_actions([], [], partial_manifest)
+
+
+# ---------------------------------------------------------------------------
+# Hardening 2: minimum camera views and missing labels.action key
+# ---------------------------------------------------------------------------
+
+
+def test_single_camera_view_rejected() -> None:
+    """Samples with fewer than 2 camera views must be rejected."""
+    data: dict[str, Any] = {
+        "content": {
+            "segment_info": {
+                "sampled_at_start": "1970-01-01T00:00:00",
+                "sampled_at_end": "1970-01-01T00:00:05",
+            },
+            "action_cam": {
+                "rank0": {
+                    "face_positions": [],
+                    "frame_timestamps": [],
+                    "sampling_scores": [],
+                    "poses": [],
+                },
+                # Only one view — must be rejected
+            },
+            "labels": {"action": []},
+        }
+    }
+    with pytest.raises(RetailActionConversionError, match="at least 2 camera views required"):
+        convert_sample_metadata(data, sample_id="single-view", split=Split.VALIDATION)
+
+
+def test_missing_labels_action_key_rejected() -> None:
+    """A 'labels' dict without the 'action' key must be rejected explicitly."""
+    data: dict[str, Any] = {
+        "content": {
+            "segment_info": {
+                "sampled_at_start": "1970-01-01T00:00:00",
+                "sampled_at_end": "1970-01-01T00:00:05",
+            },
+            "action_cam": {
+                "rank0": {
+                    "face_positions": [],
+                    "frame_timestamps": [],
+                    "sampling_scores": [],
+                    "poses": [],
+                },
+                "rank1": {
+                    "face_positions": [],
+                    "frame_timestamps": [],
+                    "sampling_scores": [],
+                    "poses": [],
+                },
+            },
+            "labels": {
+                # 'action' key intentionally absent — should NOT silently become []
+                "other_annotation": [],
+            },
+        }
+    }
+    with pytest.raises(RetailActionConversionError, match="missing required 'action' key"):
+        convert_sample_metadata(data, sample_id="no-action-key", split=Split.VALIDATION)
+
+
+# ---------------------------------------------------------------------------
+# Hardening 3: archive checksum enforcement
+# ---------------------------------------------------------------------------
+
+
+def test_checksum_verification_passes_with_correct_digest(tmp_path: Path) -> None:
+    import hashlib
+
+    tar_path = tmp_path / "validation.tar"
+    samples_data = {
+        "validation/000001/metadata.json": _make_synthetic_sample_metadata(
+            [
+                {
+                    "label": "take",
+                    "start": 0.1,
+                    "end": 0.5,
+                    "spatial": {
+                        "action_cam": {
+                            "rank0": {"x": 0.2, "y": 0.3},
+                            "rank1": {"x": 0.4, "y": 0.5},
+                        }
+                    },
+                }
+            ]
+        ),
+    }
+    _create_synthetic_tar(tar_path, samples_data)
+
+    correct_digest = hashlib.sha256(tar_path.read_bytes()).hexdigest()
+    out_dir = tmp_path / "verified_out"
+    summary = convert_retail_action_split(
+        tar_path, output_dir=out_dir, expected_sha256=correct_digest
+    )
+    assert summary.complete is True
+
+
+def test_checksum_verification_fails_with_wrong_digest(tmp_path: Path) -> None:
+    tar_path = tmp_path / "validation.tar"
+    samples_data = {
+        "validation/000001/metadata.json": _make_synthetic_sample_metadata(
+            [
+                {
+                    "label": "take",
+                    "start": 0.1,
+                    "end": 0.5,
+                    "spatial": {
+                        "action_cam": {
+                            "rank0": {"x": 0.2, "y": 0.3},
+                            "rank1": {"x": 0.4, "y": 0.5},
+                        }
+                    },
+                }
+            ]
+        ),
+    }
+    _create_synthetic_tar(tar_path, samples_data)
+
+    wrong_digest = "a" * 64
+    with pytest.raises(RetailActionConversionError, match="archive checksum mismatch"):
+        convert_retail_action_split(tar_path, expected_sha256=wrong_digest)

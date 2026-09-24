@@ -9,7 +9,7 @@ from typing import Literal
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 SCHEMA_VERSION = "1.0"
-ACTION_SCHEMA_VERSION = "2.0"
+ACTION_SCHEMA_VERSION = "2.1"
 
 
 class StrictRecord(BaseModel):
@@ -116,11 +116,17 @@ class PoseReference(StrictRecord):
 
 
 class ActionEvaluationManifest(StrictRecord):
-    """Authoritative sample universe for one RetailAction evaluation split."""
+    """Authoritative sample universe for one RetailAction evaluation split.
+
+    ``complete=True`` means the manifest covers every sample in the split.
+    ``complete=False`` marks an inspection subset produced by ``--max-samples``;
+    benchmark evaluation must refuse to accept it.
+    """
 
     dataset_version: str = Field(min_length=1)
     split: Split
     sample_ids: list[str] = Field(min_length=1)
+    complete: bool = True
 
     @model_validator(mode="after")
     def unique_sample_ids(self) -> ActionEvaluationManifest:

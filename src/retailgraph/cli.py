@@ -113,7 +113,22 @@ def convert_retail_action_cmd(
         int | None,
         typer.Option(
             "--max-samples",
-            help="Max samples to convert (for inspection or testing)",
+            help=(
+                "Limit conversion to N samples for inspection. "
+                "Writes inspection_subset.json instead of evaluation_manifest.json; "
+                "benchmark evaluation will reject this partial artifact."
+            ),
+        ),
+    ] = None,
+    expected_sha256: Annotated[
+        str | None,
+        typer.Option(
+            "--expected-sha256",
+            help=(
+                "Expected SHA-256 hex digest of the source .tar archive. "
+                "Conversion aborts with an error if the actual digest does not match. "
+                "Only valid when --source is a .tar file."
+            ),
         ),
     ] = None,
     inspect_only: Annotated[
@@ -133,5 +148,6 @@ def convert_retail_action_cmd(
         split_override=split_enum,
         revision=revision,
         max_samples=max_samples,
+        expected_sha256=expected_sha256,
     )
     typer.echo(json.dumps(summary.to_dict(), indent=2, sort_keys=True))
