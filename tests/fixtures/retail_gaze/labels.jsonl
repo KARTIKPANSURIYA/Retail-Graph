@@ -1,0 +1,2 @@
+{"sample_id":"synthetic-gaze-1","head_box":{"x_min":10,"y_min":10,"x_max":30,"y_max":40},"gaze_target":{"x":0.5,"y":0.5},"region_id":"shelf-a"}
+{"sample_id":"synthetic-gaze-2","head_box":{"x_min":20,"y_min":20,"x_max":40,"y_max":50},"gaze_target":{"x":0.6,"y":0.5}}
