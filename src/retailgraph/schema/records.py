@@ -115,6 +115,22 @@ class PoseReference(StrictRecord):
     format: str
 
 
+class ActionEvaluationManifest(StrictRecord):
+    """Authoritative sample universe for one RetailAction evaluation split."""
+
+    dataset_version: str = Field(min_length=1)
+    split: Split
+    sample_ids: list[str] = Field(min_length=1)
+
+    @model_validator(mode="after")
+    def unique_sample_ids(self) -> ActionEvaluationManifest:
+        if any(not sample_id.strip() for sample_id in self.sample_ids):
+            raise ValueError("sample_ids must contain non-empty identifiers")
+        if len(self.sample_ids) != len(set(self.sample_ids)):
+            raise ValueError("sample_ids must be unique")
+        return self
+
+
 class RetailActionLabel(StrictRecord):
     """Normalized action event schema v2; v1 lacked a sample identifier."""
 

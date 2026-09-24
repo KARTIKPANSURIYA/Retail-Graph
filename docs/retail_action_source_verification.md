@@ -44,3 +44,24 @@ Do not implement a source converter until an agent can complete all of these ste
 
 Official spatio-temporal evaluation code, matching details, thresholds, interpolation, and baseline
 configuration also remain unverified. The local temporal-only smoke metric is not a substitute.
+
+## Re-verification attempt (2026-09-24)
+
+The follow-up ingestion task retried metadata-only access without requesting any video payload:
+
+```text
+git ls-remote https://huggingface.co/datasets/standard-cognition/RetailAction HEAD
+curl https://huggingface.co/api/datasets/standard-cognition/RetailAction/revision/main
+curl 'https://huggingface.co/api/datasets/standard-cognition/RetailAction/tree/main?recursive=true&expand=false'
+curl 'https://datasets-server.huggingface.co/info?dataset=standard-cognition/RetailAction'
+curl 'https://datasets-server.huggingface.co/first-rows?dataset=standard-cognition/RetailAction&config=default&split=train'
+curl https://huggingface.co/datasets/standard-cognition/RetailAction/raw/main/README.md
+```
+
+Every Hugging Face hostname failed before HTTP content transfer with `CONNECT tunnel failed,
+response 403`; the browsing gateway returned `401 Unauthorized`. A mirror endpoint was also tried
+only as a discovery fallback and was blocked by the same proxy. Thus the immutable commit SHA,
+dataset card, license, file tree, archive metadata, and annotation sample remain unavailable and
+**no source fields are directly verified**. The configured version remains an explicit blocked
+sentinel rather than a fabricated SHA. No source-specific converter or source-shaped fixture was
+added.

@@ -2,7 +2,11 @@ from pathlib import Path
 
 import pytest
 
-from retailgraph.data.adapters import load_retail_action_labels, load_samples
+from retailgraph.data.adapters import (
+    load_action_evaluation_manifest,
+    load_retail_action_labels,
+    load_samples,
+)
 from retailgraph.data.integrity import assert_no_group_leakage
 
 FIXTURES = Path(__file__).parent / "fixtures"
@@ -36,3 +40,14 @@ def test_malformed_record_reports_line(tmp_path: Path) -> None:
     path.write_text('{"action":"invented"}\n')
     with pytest.raises(ValueError, match=r"bad.jsonl:1"):
         load_retail_action_labels(path)
+
+
+def test_action_evaluation_manifest_includes_empty_video() -> None:
+    manifest = load_action_evaluation_manifest(
+        FIXTURES / "retail_action" / "evaluation_manifest.json"
+    )
+    assert manifest.sample_ids == [
+        "synthetic-video-1",
+        "synthetic-video-2",
+        "synthetic-empty-video",
+    ]

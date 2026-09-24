@@ -4,6 +4,7 @@ from retailgraph.evaluation.action import evaluate_actions, temporal_iou
 from retailgraph.evaluation.gaze import evaluate_gaze
 from retailgraph.schema.records import (
     ActionClass,
+    ActionEvaluationManifest,
     AttentionType,
     ModelPrediction,
     NormalizedPoint,
@@ -13,6 +14,12 @@ from retailgraph.schema.records import (
     TemporalInterval,
     ViewPoint,
 )
+
+
+def _manifest(*sample_ids: str) -> ActionEvaluationManifest:
+    return ActionEvaluationManifest(
+        dataset_version="synthetic-v1", split="test", sample_ids=list(sample_ids)
+    )
 
 
 def test_temporal_iou_and_per_class_counts() -> None:
@@ -35,7 +42,7 @@ def test_temporal_iou_and_per_class_counts() -> None:
         confidence=1,
         model_version="test",
     )
-    result = evaluate_actions([label], [prediction])
+    result = evaluate_actions([label], [prediction], _manifest("sample-a"))
     assert result["metric"] == "simple_temporal_event_pr_not_official_map"
     assert result["per_class"]["take"]["precision"] == 1
     assert result["per_class"]["put"]["recall"] == 0
@@ -98,7 +105,11 @@ def _action_prediction(sample_id: str, prediction_id: str) -> ModelPrediction:
 
 def test_action_matching_never_crosses_sample_boundary() -> None:
     labels = [_action_label("sample-a", "event-a"), _action_label("sample-b", "event-b")]
-    result = evaluate_actions(labels, [_action_prediction("sample-a", "prediction-a")])
+    result = evaluate_actions(
+        labels,
+        [_action_prediction("sample-a", "prediction-a")],
+        _manifest("sample-a", "sample-b"),
+    )
     take = result["per_class"]["take"]
     assert take == {
         "true_positives": 1,
@@ -111,15 +122,34 @@ def test_action_matching_never_crosses_sample_boundary() -> None:
     }
 
 
-def test_action_prediction_for_missing_sample_is_false_positive() -> None:
+def test_action_prediction_on_empty_evaluated_sample_is_false_positive() -> None:
     result = evaluate_actions(
         [_action_label("sample-a", "event-a")],
-        [_action_prediction("missing-sample", "prediction-a")],
+        [_action_prediction("empty-sample", "prediction-a")],
+        _manifest("sample-a", "empty-sample"),
     )
-    assert result["predictions_for_unlabeled_samples"] == 1
+    assert result["samples_without_ground_truth_actions"] == ["empty-sample"]
     assert result["per_class"]["take"]["false_positives"] == 1
     assert result["per_class"]["take"]["false_negatives"] == 1
     assert result["samples_without_action_predictions"] == ["sample-a"]
+
+
+def test_action_prediction_outside_manifest_is_rejected() -> None:
+    with pytest.raises(ValueError, match="predictions outside evaluation manifest"):
+        evaluate_actions(
+            [],
+            [_action_prediction("out-of-scope", "prediction-a")],
+            _manifest("evaluated-empty-sample"),
+        )
+
+
+def test_action_label_outside_manifest_is_rejected() -> None:
+    with pytest.raises(ValueError, match="labels outside evaluation manifest"):
+        evaluate_actions(
+            [_action_label("out-of-scope", "event-a")],
+            [],
+            _manifest("evaluated-empty-sample"),
+        )
 
 
 def test_action_evaluation_reports_abstention_and_empty_classes() -> None:
@@ -130,7 +160,7 @@ def test_action_evaluation_reports_abstention_and_empty_classes() -> None:
         confidence=0.2,
         model_version="test",
     )
-    result = evaluate_actions([], [abstention])
+    result = evaluate_actions([], [abstention], _manifest("sample-a", "empty-sample"))
     assert result["abstention_count"] == 1
     assert result["per_class"]["touch"]["ground_truth_count"] == 0
     assert result["per_class"]["touch"]["prediction_count"] == 0
@@ -145,4 +175,13 @@ def test_action_evaluation_rejects_duplicate_ids(duplicate_kind: str) -> None:
     else:
         predictions.append(_action_prediction("sample-b", "prediction-a"))
     with pytest.raises(ValueError, match=f"duplicate .*{duplicate_kind}_id"):
-        evaluate_actions(labels, predictions)
+        evaluate_actions(labels, predictions, _manifest("sample-a", "sample-b"))
+
+
+def test_action_label_without_predictions_is_false_negative() -> None:
+    result = evaluate_actions(
+        [_action_label("sample-a", "event-a")], [], _manifest("sample-a", "empty-sample")
+    )
+    assert result["per_class"]["take"]["false_negatives"] == 1
+    assert result["samples_without_action_predictions"] == ["empty-sample", "sample-a"]
+    assert result["evaluated_sample_count"] == 2

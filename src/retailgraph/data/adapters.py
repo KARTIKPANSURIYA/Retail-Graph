@@ -10,7 +10,12 @@ from typing import Any, TypeVar
 
 from pydantic import BaseModel, ValidationError
 
-from retailgraph.schema.records import RetailActionLabel, RetailGazeLabel, VideoSample
+from retailgraph.schema.records import (
+    ActionEvaluationManifest,
+    RetailActionLabel,
+    RetailGazeLabel,
+    VideoSample,
+)
 
 T = TypeVar("T", bound=BaseModel)
 
@@ -38,3 +43,12 @@ def load_retail_action_labels(path: Path) -> list[RetailActionLabel]:
 
 def load_retail_gaze_labels(path: Path) -> list[RetailGazeLabel]:
     return _read_jsonl(path, RetailGazeLabel)
+
+
+def load_action_evaluation_manifest(path: Path) -> ActionEvaluationManifest:
+    """Load the authoritative sample universe for an action evaluation split."""
+    try:
+        payload: Any = json.loads(path.read_text(encoding="utf-8"))
+        return ActionEvaluationManifest.model_validate(payload)
+    except (json.JSONDecodeError, ValidationError) as error:
+        raise ValueError(f"{path}: invalid ActionEvaluationManifest: {error}") from error

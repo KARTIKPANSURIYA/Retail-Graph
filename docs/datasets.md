@@ -60,3 +60,12 @@ Retail Gaze records remain on schema 1.x.
 
 See [the source verification log](retail_action_source_verification.md) for the blocked revision pin
 and the exact ingestion gate. No upstream converter exists until actual source structure is verified.
+
+
+## Action evaluation manifests
+
+A normalized `ActionEvaluationManifest` records the dataset revision, split, and authoritative
+list of every evaluated sample. It must include zero-action videos; deriving this universe from
+action labels is prohibited. Duplicate sample IDs are rejected. Labels or predictions outside the
+manifest are evaluation errors, while action predictions on an in-scope zero-action sample count
+as false positives.

@@ -12,6 +12,7 @@ import yaml
 
 from retailgraph.baselines.deterministic import predict_actions, predict_gaze
 from retailgraph.data.adapters import (
+    load_action_evaluation_manifest,
     load_retail_action_labels,
     load_retail_gaze_labels,
     load_samples,
@@ -57,11 +58,16 @@ def smoke_test(
 ) -> None:
     """Run synthetic plumbing only; output is not a research benchmark."""
     action_labels = load_retail_action_labels(fixtures / "retail_action" / "labels.jsonl")
+    action_manifest = load_action_evaluation_manifest(
+        fixtures / "retail_action" / "evaluation_manifest.json"
+    )
     gaze_labels = load_retail_gaze_labels(fixtures / "retail_gaze" / "labels.jsonl")
     result = {
         "benchmark": False,
         "warning": "SYNTHETIC CONTRACT SMOKE TEST; NOT A RESEARCH RESULT",
-        "retail_action": evaluate_actions(action_labels, predict_actions(action_labels)),
+        "retail_action": evaluate_actions(
+            action_labels, predict_actions(action_labels), action_manifest
+        ),
         "retail_gaze": evaluate_gaze(gaze_labels, predict_gaze(gaze_labels)).to_dict(),
     }
     typer.echo(json.dumps(result, sort_keys=True))

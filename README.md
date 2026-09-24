@@ -52,7 +52,7 @@ validated. See [dataset notes](docs/datasets.md) before writing converters.
 ## Layout
 
 - `src/retailgraph/schema`: strict, versioned normalized contracts and coordinate conversions.
-- `src/retailgraph/data`: normalized JSONL adapters, manifests, and group leakage checks.
+- `src/retailgraph/data`: normalized JSONL adapters, authoritative evaluation manifests, and group leakage checks.
 - `src/retailgraph/evaluation`: separate gaze and simple action-event evaluation.
 - `src/retailgraph/baselines`: deterministic contract smoke predictors (not scientific baselines).
 - `configs`: reviewable examples and initial manifests.

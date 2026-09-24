@@ -66,3 +66,14 @@ def test_prediction_v1_record_requires_explicit_migration() -> None:
                 "confidence": 0.5,
             }
         )
+
+
+def test_action_evaluation_manifest_rejects_duplicate_samples() -> None:
+    from retailgraph.schema.records import ActionEvaluationManifest
+
+    with pytest.raises(ValidationError, match="sample_ids must be unique"):
+        ActionEvaluationManifest(
+            dataset_version="synthetic-v1",
+            split="test",
+            sample_ids=["sample-a", "sample-a"],
+        )

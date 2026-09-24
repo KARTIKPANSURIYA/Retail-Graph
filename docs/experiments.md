@@ -31,3 +31,12 @@ Calibration requires probabilistic predictions and held-out calibration data; sc
 alone is not silently treated as a spatial probability distribution. Pre-register thresholds and
 ablation hypotheses. Placement optimization and purchase conversion are out of scope until a
 future intervention joined to consented POS outcomes supports causal analysis.
+
+## RetailAction evaluation sample universe
+
+Every simple action evaluation requires a versioned `ActionEvaluationManifest` containing the
+complete official split sample list, including videos with no labeled actions. Labels and
+predictions outside that universe are errors. An action prediction on an in-scope empty video is a
+false positive; an action label with no matching prediction is a false negative. Abstentions are
+reported separately. This requirement prevents label-derived sample lists from silently excluding
+negative videos and does not make the metric equivalent to official spatio-temporal mAP.
