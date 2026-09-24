@@ -33,5 +33,36 @@ def test_invalid_interval_and_box_are_rejected() -> None:
 def test_action_prediction_requires_interval() -> None:
     with pytest.raises(ValidationError, match="require an interval"):
         ModelPrediction(
-            sample_id="x", prediction_type=ActionClass.TAKE, model_version="v1", confidence=0.5
+            schema_version="2.0",
+            sample_id="x",
+            prediction_type=ActionClass.TAKE,
+            model_version="v1",
+            confidence=0.5,
+        )
+
+
+def test_action_v1_record_requires_explicit_migration() -> None:
+    from retailgraph.schema.records import RetailActionLabel
+
+    with pytest.raises(ValidationError, match="schema_version"):
+        RetailActionLabel.model_validate(
+            {
+                "sample_id": "sample-a",
+                "event_id": "event-a",
+                "action": "take",
+                "interval": {"start_s": 1, "end_s": 2},
+                "points": [{"view_id": "v", "point": {"x": 0.5, "y": 0.5}}],
+            }
+        )
+
+
+def test_prediction_v1_record_requires_explicit_migration() -> None:
+    with pytest.raises(ValidationError, match="schema_version"):
+        ModelPrediction.model_validate(
+            {
+                "sample_id": "sample-a",
+                "prediction_type": "unknown",
+                "model_version": "old",
+                "confidence": 0.5,
+            }
         )

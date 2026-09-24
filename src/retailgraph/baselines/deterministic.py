@@ -15,6 +15,7 @@ def predict_gaze(labels: list[RetailGazeLabel]) -> list[ModelPrediction]:
     """Return the image center; labels are used only to enumerate sample IDs."""
     return [
         ModelPrediction(
+            schema_version="2.0",
             sample_id=label.sample_id,
             prediction_type=AttentionType.GAZE_POINT,
             point=NormalizedPoint(x=0.5, y=0.5),
@@ -29,7 +30,9 @@ def predict_actions(labels: list[RetailActionLabel]) -> list[ModelPrediction]:
     """Copy fixture intervals/classes solely to exercise evaluation plumbing."""
     return [
         ModelPrediction(
-            sample_id=label.event_id,
+            schema_version="2.0",
+            sample_id=label.sample_id,
+            prediction_id=f"smoke-{label.event_id}",
             prediction_type=label.action,
             interval=label.interval,
             confidence=0.5,

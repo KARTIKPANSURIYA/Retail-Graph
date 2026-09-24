@@ -47,3 +47,16 @@ normalized point per available view. Retail Gaze labels contain a pixel head box
 target, and optional mask reference/region. Coordinates use top-left origin, x rightward/y
 downward, normalized endpoints `[0,1]`; pixel boxes are half-open. Paths may be relative to a
 configured data root. Mask loading/point-in-mask semantics await verified upstream formats.
+
+## Normalized action schema migration: 1.x to 2.0
+
+Action schema 1.x omitted `sample_id`, so it cannot be safely evaluated and is rejected rather than
+silently reinterpreted. Version 2.0 requires explicit `schema_version: "2.0"` and `sample_id` on
+every `RetailActionLabel`. Prediction schema 2.0 likewise requires explicit `schema_version: "2.0"`; action predictions
+additionally require a unique `prediction_id`.
+Migration requires joining each old event to the authoritative video/sample index; there is no
+safe default. If that mapping is unavailable, discard and regenerate the normalized metadata.
+Retail Gaze records remain on schema 1.x.
+
+See [the source verification log](retail_action_source_verification.md) for the blocked revision pin
+and the exact ingestion gate. No upstream converter exists until actual source structure is verified.

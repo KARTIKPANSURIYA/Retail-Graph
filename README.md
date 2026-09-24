@@ -57,12 +57,12 @@ validated. See [dataset notes](docs/datasets.md) before writing converters.
 - `src/retailgraph/baselines`: deterministic contract smoke predictors (not scientific baselines).
 - `configs`: reviewable examples and initial manifests.
 - `tests/fixtures`: synthetic metadata only; no dataset imagery/video.
-- `docs`: architecture, dataset caveats, experiments, and roadmap.
+- `docs`: architecture, dataset caveats, source verification, experiments, and roadmap.
 
 ## Next work
 
-1. Under accepted terms, pin upstream dataset revisions, enumerate released schemas/splits, and
-   add explicit converters plus golden metadata samples without media.
+1. Unblock official-source access, pin the immutable RetailAction revision, inspect the smallest
+   metadata artifact, and implement a strict converter only for directly verified fields.
 2. Reproduce each published/reference baseline and the confirmed RetailAction official protocol
    before evaluating new models.
 3. Implement leakage-safe dataset indices and real single-track baselines with per-class/grouped

@@ -4,10 +4,12 @@ from __future__ import annotations
 
 from enum import StrEnum
 from pathlib import Path
+from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 SCHEMA_VERSION = "1.0"
+ACTION_SCHEMA_VERSION = "2.0"
 
 
 class StrictRecord(BaseModel):
@@ -114,7 +116,11 @@ class PoseReference(StrictRecord):
 
 
 class RetailActionLabel(StrictRecord):
-    event_id: str
+    """Normalized action event schema v2; v1 lacked a sample identifier."""
+
+    schema_version: Literal["2.0"]
+    sample_id: str = Field(min_length=1)
+    event_id: str = Field(min_length=1)
     action: ActionClass
     interval: TemporalInterval
     points: list[ViewPoint] = Field(min_length=1)
@@ -130,7 +136,11 @@ class RetailGazeLabel(StrictRecord):
 
 
 class ModelPrediction(StrictRecord):
-    sample_id: str
+    """Prediction schema v2 adds stable IDs for action predictions."""
+
+    schema_version: Literal["2.0"]
+    sample_id: str = Field(min_length=1)
+    prediction_id: str | None = Field(default=None, min_length=1)
     prediction_type: ActionClass | AttentionType
     model_version: str
     confidence: float = Field(ge=0, le=1)
@@ -145,8 +155,11 @@ class ModelPrediction(StrictRecord):
         if self.prediction_type == AttentionType.UNKNOWN:
             if self.point is not None or self.region_id is not None:
                 raise ValueError("unknown/abstained predictions cannot carry a target")
-        elif isinstance(self.prediction_type, ActionClass) and self.interval is None:
-            raise ValueError("action predictions require an interval")
+        elif isinstance(self.prediction_type, ActionClass):
+            if self.interval is None:
+                raise ValueError("action predictions require an interval")
+            if self.prediction_id is None:
+                raise ValueError("action predictions require a prediction_id")
         elif self.prediction_type == AttentionType.GAZE_POINT and self.point is None:
             raise ValueError("gaze-point predictions require a point")
         elif self.prediction_type == AttentionType.SHELF_REGION and self.region_id is None:

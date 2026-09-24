@@ -1,5 +1,5 @@
 dataset: retail_action
-version: unpinned-upstream-review-required
+version: unpinned-source-access-blocked-2026-09-24
 files:
   - path: README.md
     required: true
