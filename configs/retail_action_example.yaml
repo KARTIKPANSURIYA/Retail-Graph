@@ -1,0 +1,13 @@
+schema_version: "1.0"
+experiment: retail_action_single_view_smoke
+dataset:
+  name: retail_action
+  root: ${RETAILGRAPH_DATA_ROOT}/raw/retail_action
+  manifest: configs/retail_action_manifest.yaml
+  split_source: official  # never create random frame splits
+model:
+  kind: deterministic_contract_smoke
+seed: 42
+evaluation:
+  kind: simple_temporal_event_pr_not_official_map
+  temporal_iou_threshold: 0.5

@@ -1,0 +1,1 @@
+"""RetailGraph schema components."""
