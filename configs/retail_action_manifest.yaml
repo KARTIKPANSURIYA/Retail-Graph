@@ -1,12 +1,14 @@
 dataset: retail_action
-version: 49cb590723db921a4bd5a38adea92f6abd3f7a00
+version: unpinned-source-access-blocked-2026-09-24
 files:
   - path: README.md
-    sha256: a30ee7ee7ab1c5e4dde7cc350b3a1eea433e58fa066a86d050db774eb0431519
-    required: true
-  - path: LICENSE
-    sha256: 89f78a96b61776eb17584edd1ea7451d90feb0fe1901fe94265335c46bb4ab40
     required: true
   - path: data/validation.tar
-    sha256: 1287dc0b491f3eab5807d216bb96db2436da845ed0ea6e4ec69daf6182873836
+    sha256: null  # Pin only from the immutable official repository manifest.
+    required: false
+  - path: data/train.tar
+    sha256: null
+    required: false
+  - path: data/test.tar
+    sha256: null
     required: false

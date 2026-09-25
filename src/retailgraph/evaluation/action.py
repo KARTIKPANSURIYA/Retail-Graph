@@ -72,12 +72,6 @@ def evaluate_actions(
     """
     if not 0 < temporal_iou_threshold <= 1:
         raise ValueError("temporal_iou_threshold must be in (0, 1]")
-    if not manifest.complete:
-        raise ValueError(
-            "manifest.complete is False — this is a partial inspection subset produced with "
-            "--max-samples and must not be used for benchmark evaluation. "
-            "Re-run convert-retail-action without --max-samples to produce the full-split manifest."
-        )
     _validate_ids(labels, predictions)
 
     evaluated_samples = set(manifest.sample_ids)

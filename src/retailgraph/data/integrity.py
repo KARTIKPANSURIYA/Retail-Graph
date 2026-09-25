@@ -6,7 +6,7 @@ import hashlib
 from collections import defaultdict
 from pathlib import Path
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 
 from retailgraph.schema.records import Split, VideoSample
 
@@ -14,7 +14,7 @@ from retailgraph.schema.records import Split, VideoSample
 class ManifestFile(BaseModel):
     model_config = ConfigDict(extra="forbid")
     path: str
-    sha256: str | None = None
+    sha256: str | None = Field(default=None, pattern=r"^[0-9a-f]{64}$")
     required: bool = True
 
 
@@ -23,6 +23,17 @@ class DatasetManifest(BaseModel):
     dataset: str
     version: str
     files: list[ManifestFile]
+
+
+def sha256_file(path: Path, *, chunk_size: int = 1024 * 1024) -> str:
+    """Hash a file with bounded reads suitable for multi-gigabyte archives."""
+    if chunk_size <= 0:
+        raise ValueError("chunk_size must be positive")
+    digest = hashlib.sha256()
+    with path.open("rb") as stream:
+        while chunk := stream.read(chunk_size):
+            digest.update(chunk)
+    return digest.hexdigest()
 
 
 def check_manifest(root: Path, manifest: DatasetManifest) -> dict[str, list[str]]:
@@ -34,7 +45,7 @@ def check_manifest(root: Path, manifest: DatasetManifest) -> dict[str, list[str]
                 result["missing"].append(item.path)
             continue
         if item.sha256:
-            actual = hashlib.sha256(path.read_bytes()).hexdigest()
+            actual = sha256_file(path)
             if actual != item.sha256:
                 result["checksum_mismatch"].append(item.path)
                 continue
