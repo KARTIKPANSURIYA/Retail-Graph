@@ -1,0 +1,14 @@
+dataset: retail_action
+version: unpinned-source-access-blocked-2026-09-24
+files:
+  - path: README.md
+    required: true
+  - path: data/validation.tar
+    sha256: null  # Pin only from the immutable official repository manifest.
+    required: false
+  - path: data/train.tar
+    sha256: null
+    required: false
+  - path: data/test.tar
+    sha256: null
+    required: false
