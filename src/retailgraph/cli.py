@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Annotated
 
 import typer
-import yaml
+import yaml  # type: ignore[import-untyped]  # PyYAML does not ship inline type information.
 
 from retailgraph.baselines.deterministic import predict_actions, predict_gaze
 from retailgraph.data.adapters import (

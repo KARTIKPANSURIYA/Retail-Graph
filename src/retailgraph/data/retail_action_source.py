@@ -41,9 +41,20 @@ PINNED_ARCHIVE_SHA256 = {
     Split.VALIDATION: "1287dc0b491f3eab5807d216bb96db2436da845ed0ea6e4ec69daf6182873836"
 }
 REQUIRED_VIEWS = frozenset({"rank0", "rank1"})
-REQUIRED_CAMERA_METADATA = frozenset(
-    {"face_positions", "frame_timestamps", "sampling_scores", "poses"}
-)
+CAMERA_METADATA_TYPES: dict[str, tuple[type[object], ...]] = {
+    # The pinned validation metadata contains lists for these fields in every observed view.
+    "face_positions": (list,),
+    "poses": (list,),
+    # Direct inspection recorded null for both fields in 157 validation samples.
+    "frame_timestamps": (list, type(None)),
+    "sampling_scores": (list, type(None)),
+}
+CAMERA_METADATA_TYPE_NAMES = {
+    "face_positions": "list",
+    "poses": "list",
+    "frame_timestamps": "list or null",
+    "sampling_scores": "list or null",
+}
 
 
 class RetailActionConversionError(ValueError):
@@ -80,6 +91,7 @@ class ConversionSummary:
     expected_sha256: str | None
     actual_sha256: str | None
     verification_status: str
+    unavailable_camera_metadata_counts: dict[str, int]
     output_paths: dict[str, str]
 
     def to_dict(self) -> dict[str, Any]:
@@ -182,22 +194,22 @@ def convert_sample_metadata(
                 sample_id=sample_id,
                 source_ref=source_ref,
             )
-        missing = REQUIRED_CAMERA_METADATA - metadata.keys()
+        missing = CAMERA_METADATA_TYPES.keys() - metadata.keys()
         if missing:
             raise RetailActionConversionError(
                 f"camera '{view_id}' missing required metadata: {sorted(missing)}",
                 sample_id=sample_id,
                 source_ref=source_ref,
             )
-        invalid = sorted(
-            key for key in REQUIRED_CAMERA_METADATA if not isinstance(metadata[key], list)
-        )
-        if invalid:
-            raise RetailActionConversionError(
-                f"camera '{view_id}' metadata fields must be lists: {invalid}",
-                sample_id=sample_id,
-                source_ref=source_ref,
-            )
+        for field_name, accepted_types in CAMERA_METADATA_TYPES.items():
+            value = metadata[field_name]
+            if not isinstance(value, accepted_types):
+                raise RetailActionConversionError(
+                    f"camera '{view_id}' field '{field_name}' must be "
+                    f"{CAMERA_METADATA_TYPE_NAMES[field_name]}, got {type(value).__name__}",
+                    sample_id=sample_id,
+                    source_ref=source_ref,
+                )
 
     views: list[CameraView] = []
     for view_id in sorted(action_cam.keys()):
@@ -555,6 +567,13 @@ def convert_retail_action_split(
                 f"{trusted_digest!r} for split {archive_split.value!r}",
                 source_ref=str(source_path),
             )
+        if not is_partial and revision != PINNED_DATASET_REVISION:
+            raise RetailActionConversionError(
+                "complete benchmark conversion revision must match the dataset commit pinned "
+                f"to the trusted archive digest: expected {PINNED_DATASET_REVISION!r}, "
+                f"got {revision!r}",
+                source_ref=str(source_path),
+            )
         if expected_sha256 is not None:
             actual_sha256 = _verify_archive_checksum(
                 source_path,
@@ -584,6 +603,7 @@ def convert_retail_action_split(
     seen_sample_ids: set[str] = set()
     counts_by_class: Counter[str] = Counter()
     actions_per_sample: Counter[int] = Counter()
+    unavailable_camera_metadata: Counter[str] = Counter()
     zero_action_count = 0
     resolved_split: Split | None = split_override
 
@@ -611,6 +631,11 @@ def convert_retail_action_split(
             revision=revision,
             source_ref=source_ref,
         )
+        camera_metadata = payload["content"]["action_cam"]
+        for view_metadata in camera_metadata.values():
+            for field_name in CAMERA_METADATA_TYPES:
+                if view_metadata[field_name] is None:
+                    unavailable_camera_metadata[field_name] += 1
 
         samples.append(sample)
         labels.extend(sample_labels)
@@ -691,6 +716,10 @@ def convert_retail_action_split(
         expected_sha256=expected_sha256,
         actual_sha256=actual_sha256,
         verification_status=verification_status,
+        unavailable_camera_metadata_counts={
+            field_name: unavailable_camera_metadata[field_name]
+            for field_name in CAMERA_METADATA_TYPES
+        },
         output_paths=output_paths,
     )
 

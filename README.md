@@ -63,6 +63,17 @@ for that split and must match the archive's chunked SHA-256. The report records 
 actual digests and verification status. `--max-samples` remains an inspection-only partial run and
 never creates an evaluation manifest eligible for benchmark evaluation.
 
+Camera metadata is validated field by field against the pinned source observations:
+`face_positions` and `poses` must be lists, while `frame_timestamps` and `sampling_scores` may be
+lists or `null` because both were observed unavailable in 157 validation samples. Complete
+conversion also fixes the recorded dataset revision to the commit associated with the trusted
+archive digest; `--revision` cannot relabel a verified archive.
+
+The current repair environment did not contain the ignored real `validation.tar`, so the updated
+nullable-field converter has synthetic regression coverage but no new end-to-end real-archive run.
+See the [source verification log](docs/retail_action_source_verification.md) for the exact complete
+conversion and concise report commands; synthetic counts are not real dataset validation.
+
 See [RetailAction source verification log](docs/retail_action_source_verification.md) and [dataset registry](docs/datasets.md) for detailed schema inspection notes.
 
 ## Layout

@@ -101,6 +101,12 @@ Every sample's `metadata.json` contains a single root key `"content"`:
    - `sampling_scores`: List of `[timestamp_iso, float_score]`, or `null` in 157 samples.
    - `poses`: List of 32 frame poses for the subject (present in 2,545 of 2,554 views; absent in 9 views), containing 18 body keypoints and confidence scores.
 
+The converter therefore validates these fields independently rather than applying one broad camera
+metadata type: `face_positions` and `poses` must be lists, while only `frame_timestamps` and
+`sampling_scores` accept either a list or JSON `null`. A `null` value is treated explicitly as
+source metadata being unavailable; it is not converted to an empty list. These auxiliary source
+arrays are validated in place but are not copied into the normalized `CameraView` contract.
+
 4. **Missing fields and non-guesses:**
    - `width`, `height`, and `fps` are **not** present in `metadata.json`. MP4 video streams have resolution 600x600. `CameraView` schema was updated to make `width`, `height`, `fps` optional `None` defaults so metadata can be ingested without guessing.
    - Store identifiers, shopper identities, and cashier/POS truth are deliberately omitted by the creators for privacy.
@@ -125,8 +131,27 @@ curl -L "https://huggingface.co/datasets/standard-cognition/RetailAction/resolve
 retailgraph check-dataset --manifest configs/retail_action_manifest.yaml
 
 # 5. Inspect archive metadata without extracting videos
-retailgraph convert-retail-action --source data/raw/retail_action/data/validation.tar --inspect-only
+retailgraph convert-retail-action \
+  --source data/raw/retail_action/data/validation.tar \
+  --expected-sha256 1287dc0b491f3eab5807d216bb96db2436da845ed0ea6e4ec69daf6182873836 \
+  --inspect-only
 
 # 6. Convert split into normalized contracts
-retailgraph convert-retail-action --source data/raw/retail_action/data/validation.tar --output-dir data/processed/retail_action/validation
+retailgraph convert-retail-action \
+  --source data/raw/retail_action/data/validation.tar \
+  --expected-sha256 1287dc0b491f3eab5807d216bb96db2436da845ed0ea6e4ec69daf6182873836 \
+  --output-dir data/processed/retail_action/validation
+
+# 7. Print a concise conversion report to share for review
+python -c 'import json, pathlib; p=json.loads(pathlib.Path("data/processed/retail_action/validation/report.json").read_text()); print(json.dumps({k:p[k] for k in ("dataset_revision","split","total_samples","zero_action_sample_count","total_action_count","counts_by_class","unavailable_camera_metadata_counts","expected_sha256","actual_sha256","verification_status","complete")}, indent=2, sort_keys=True))'
 ```
+
+## Converter validation status
+
+On 2026-09-25, the nullable-field behavior and malformed-type rejection were exercised with
+clearly synthetic metadata fixtures. The actual ignored local path
+`data/raw/retail_action/data/validation.tar` was not present in the repair environment, so the
+updated converter was **not** rerun end to end on real data here. The verified archive observations
+above come from the earlier direct inspection recorded at the pinned revision; synthetic test
+counts are not presented as real-data validation. Run steps 4–7 above to complete and share the
+real-data gate.

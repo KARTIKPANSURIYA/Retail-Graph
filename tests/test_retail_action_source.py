@@ -24,6 +24,15 @@ from retailgraph.data.retail_action_source import (
 from retailgraph.schema.records import ActionClass, Split
 
 
+@pytest.fixture(autouse=True)
+def _restore_pinned_archive_digests() -> Any:
+    """Keep tests that pin generated fixture archives isolated from one another."""
+    original = dict(PINNED_ARCHIVE_SHA256)
+    yield
+    PINNED_ARCHIVE_SHA256.clear()
+    PINNED_ARCHIVE_SHA256.update(original)
+
+
 def _make_synthetic_sample_metadata(
     actions: list[dict[str, Any]],
     *,
@@ -57,6 +66,17 @@ def _make_synthetic_sample_metadata(
         }
     }
 
+    assert len(labels) == 1
+    lbl = labels[0]
+    assert lbl.schema_version == "2.0"
+    assert lbl.sample_id == "synth-001"
+    assert lbl.action == ActionClass.TAKE
+    assert lbl.interval.start_s == pytest.approx(2.0)
+    assert lbl.interval.end_s == pytest.approx(8.0)
+    assert len(lbl.points) == 2
+    pt_map = {p.view_id: (p.point.x, p.point.y) for p in lbl.points}
+    assert pt_map["rank0"] == (0.25, 0.35)
+    assert pt_map["rank1"] == (0.65, 0.75)
 
 def test_convert_single_take_sample() -> None:
     raw = _make_synthetic_sample_metadata(
@@ -82,6 +102,34 @@ def test_convert_single_take_sample() -> None:
         split=Split.VALIDATION,
         revision=PINNED_DATASET_REVISION,
     )
+    assert sample.sample_id == "synth-multi"
+    assert len(labels) == 2
+    assert labels[0].action == ActionClass.PUT
+    assert labels[0].interval.start_s == pytest.approx(1.0)
+    assert labels[0].interval.end_s == pytest.approx(3.0)
+    assert labels[1].action == ActionClass.TOUCH
+    assert labels[1].interval.start_s == pytest.approx(5.0)
+    assert labels[1].interval.end_s == pytest.approx(9.0)
+
+
+def _create_synthetic_tar(archive_path: Path, samples_data: dict[str, dict[str, Any]]) -> None:
+    """Create a synthetic TAR archive with multiple sample directories."""
+    with tarfile.open(archive_path, "w") as tar:
+        for entry_path, data in samples_data.items():
+            payload_bytes = json.dumps(data).encode("utf-8")
+            ti = tarfile.TarInfo(name=entry_path)
+            ti.size = len(payload_bytes)
+            tar.addfile(ti, io.BytesIO(payload_bytes))
+            sample_dir = entry_path.rsplit("/", 1)[0]
+            for view_id in ("rank0", "rank1"):
+                video = tarfile.TarInfo(name=f"{sample_dir}/{view_id}_video.mp4")
+                video.size = 0
+                tar.addfile(video, io.BytesIO())
+
+
+def _trust_synthetic_archive(archive_path: Path) -> str:
+    """Pin a generated fixture digest for a complete synthetic conversion."""
+    import hashlib
 
     assert sample.sample_id == "synth-001"
     assert sample.provenance.split == Split.VALIDATION
@@ -105,6 +153,53 @@ def test_convert_single_take_sample() -> None:
     assert pt_map["rank0"] == (0.25, 0.35)
     assert pt_map["rank1"] == (0.65, 0.75)
 
+def test_convert_synthetic_tar_archive(tmp_path: Path) -> None:
+    tar_path = tmp_path / "validation.tar"
+    samples_data = {
+        "validation/000001/metadata.json": _make_synthetic_sample_metadata(
+            [
+                {
+                    "label": "take",
+                    "start": 0.1,
+                    "end": 0.5,
+                    "spatial": {
+                        "action_cam": {
+                            "rank0": {"x": 0.2, "y": 0.3},
+                            "rank1": {"x": 0.4, "y": 0.5},
+                        }
+                    },
+                }
+            ]
+        ),
+        "validation/000002/metadata.json": _make_synthetic_sample_metadata([]),  # zero action
+        "validation/000003/metadata.json": _make_synthetic_sample_metadata(
+            [
+                {
+                    "label": "put",
+                    "start": 0.2,
+                    "end": 0.4,
+                    "spatial": {
+                        "action_cam": {
+                            "rank0": {"x": 0.1, "y": 0.2},
+                            "rank1": {"x": 0.3, "y": 0.4},
+                        }
+                    },
+                },
+                {
+                    "label": "touch",
+                    "start": 0.6,
+                    "end": 0.8,
+                    "spatial": {
+                        "action_cam": {
+                            "rank0": {"x": 0.5, "y": 0.6},
+                            "rank1": {"x": 0.7, "y": 0.8},
+                        }
+                    },
+                },
+            ]
+        ),
+    }
+    _create_synthetic_tar(tar_path, samples_data)
 
 def test_convert_zero_action_sample() -> None:
     raw = _make_synthetic_sample_metadata([])
@@ -115,6 +210,53 @@ def test_convert_zero_action_sample() -> None:
     )
     assert sample.sample_id == "synth-zero"
     assert len(labels) == 0
+
+
+@pytest.mark.parametrize("field_name", ["frame_timestamps", "sampling_scores"])
+def test_documented_nullable_camera_metadata_is_accepted(field_name: str) -> None:
+    """Only fields observed as null in the pinned validation metadata accept null."""
+    raw = _make_synthetic_sample_metadata([])
+    raw["content"]["action_cam"]["rank0"][field_name] = None
+
+    sample, labels = convert_sample_metadata(
+        raw,
+        sample_id="synthetic-nullable-camera",
+        split=Split.VALIDATION,
+        source_ref="validation/synthetic-nullable-camera/metadata.json",
+    )
+
+    assert sample.sample_id == "synthetic-nullable-camera"
+    assert labels == []
+
+
+@pytest.mark.parametrize(
+    ("field_name", "invalid_value", "expected_type"),
+    [
+        ("face_positions", None, "list"),
+        ("poses", None, "list"),
+        ("frame_timestamps", "not-a-list", "list or null"),
+        ("sampling_scores", {"not": "a list"}, "list or null"),
+    ],
+)
+def test_invalid_camera_metadata_type_names_sample_and_member(
+    field_name: str, invalid_value: Any, expected_type: str
+) -> None:
+    raw = _make_synthetic_sample_metadata([])
+    raw["content"]["action_cam"]["rank1"][field_name] = invalid_value
+    source_ref = "validation/bad-camera/metadata.json"
+
+    with pytest.raises(RetailActionConversionError) as exc_info:
+        convert_sample_metadata(
+            raw,
+            sample_id="bad-camera",
+            split=Split.VALIDATION,
+            source_ref=source_ref,
+        )
+
+    message = str(exc_info.value)
+    assert "sample_id='bad-camera'" in message
+    assert f"source='{source_ref}'" in message
+    assert f"field '{field_name}' must be {expected_type}" in message
 
 
 def test_convert_multi_action_sample_put_and_touch() -> None:
@@ -231,6 +373,12 @@ def test_convert_synthetic_tar_archive(tmp_path: Path) -> None:
             ]
         ),
     }
+    samples_data["validation/000002/metadata.json"]["content"]["action_cam"]["rank0"][
+        "frame_timestamps"
+    ] = None
+    samples_data["validation/000002/metadata.json"]["content"]["action_cam"]["rank1"][
+        "sampling_scores"
+    ] = None
     _create_synthetic_tar(tar_path, samples_data)
 
     out_dir = tmp_path / "converted_val"
@@ -244,6 +392,12 @@ def test_convert_synthetic_tar_archive(tmp_path: Path) -> None:
     assert summary.counts_by_class == {"take": 1, "put": 1, "touch": 1}
     assert summary.split == "validation"
     assert summary.dataset_revision == PINNED_DATASET_REVISION
+    assert summary.unavailable_camera_metadata_counts == {
+        "face_positions": 0,
+        "poses": 0,
+        "frame_timestamps": 1,
+        "sampling_scores": 1,
+    }
 
     # Verify output files can be loaded by standard adapters
     loaded_samples = load_samples(out_dir / "samples.jsonl")
@@ -588,6 +742,21 @@ def test_complete_archive_requires_pinned_digest(tmp_path: Path) -> None:
     PINNED_ARCHIVE_SHA256[Split.VALIDATION] = "b" * 64
     with pytest.raises(RetailActionConversionError, match="trusted pinned digest"):
         convert_retail_action_split(tar_path)
+
+
+def test_complete_archive_rejects_unpinned_revision(tmp_path: Path) -> None:
+    tar_path = tmp_path / "validation.tar"
+    _create_synthetic_tar(
+        tar_path,
+        {"validation/sample/metadata.json": _make_synthetic_sample_metadata([])},
+    )
+    digest = _trust_synthetic_archive(tar_path)
+    with pytest.raises(RetailActionConversionError, match="revision must match"):
+        convert_retail_action_split(
+            tar_path,
+            revision="arbitrary-revision",
+            expected_sha256=digest,
+        )
 
 
 def test_archive_requires_video_members_and_names_context(tmp_path: Path) -> None:
