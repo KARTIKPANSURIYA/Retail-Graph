@@ -2,7 +2,7 @@
 
 Research foundations for **anonymous** shopper attention and product-interaction inference from
 retail video. The repository currently provides contracts, integrity checks, deterministic
-smoke plumbing, and initial metrics—not a trained model, reproduced paper result, field
+smoke plumbing, verified source converters, and initial metrics—not a trained model, reproduced paper result, field
 measurement, or complete product.
 
 ## Status and boundaries
@@ -32,51 +32,60 @@ The final command emits JSON bearing `"benchmark": false`; its deliberately triv
 only verify plumbing. Optional `video` (OpenCV) and `ml` (PyTorch) extras avoid burdening CPU CI:
 `pip install -e '.[video,ml]'`. FFmpeg may be installed separately by the operator.
 
-## Data acquisition without automatic large downloads
+## Data acquisition and verified conversion
 
-Review terms first, then use the official Hugging Face CLI explicitly:
+Review terms first (see [licensing notes](docs/datasets.md)), then acquire data explicitly:
 
 ```bash
-pip install 'huggingface_hub[cli]'
-hf download standard-cognition/RetailAction --repo-type dataset --local-dir data/raw/retail_action
-hf download Voxel51/retail_gaze --repo-type dataset --local-dir data/raw/retail_gaze
+# Pin and verify RetailAction at immutable commit 49cb590723db921a4bd5a38adea92f6abd3f7a00
+mkdir -p data/raw/retail_action/data
+curl -s "https://huggingface.co/datasets/standard-cognition/RetailAction/raw/49cb590723db921a4bd5a38adea92f6abd3f7a00/README.md" -o data/raw/retail_action/README.md
+curl -s "https://huggingface.co/datasets/standard-cognition/RetailAction/raw/49cb590723db921a4bd5a38adea92f6abd3f7a00/LICENSE" -o data/raw/retail_action/LICENSE
+
+# Optional: download validation split archive (1.94 GB)
+curl -L "https://huggingface.co/datasets/standard-cognition/RetailAction/resolve/49cb590723db921a4bd5a38adea92f6abd3f7a00/data/validation.tar" -o data/raw/retail_action/data/validation.tar
+
+# Verify local files against declared manifest
 retailgraph check-dataset --manifest configs/retail_action_manifest.yaml
-retailgraph check-dataset --manifest configs/retail_gaze_manifest.yaml
-retailgraph retail-action-preflight \
-  --archive data/raw/retail_action/data/validation.tar \
-  --manifest configs/retail_action_manifest.yaml \
-  --split validation --output outputs/retail_action_validation
+
+# Inspect split metadata without extracting all videos
+retailgraph convert-retail-action --source data/raw/retail_action/data/validation.tar --inspect-only \
+  --expected-sha256 1287dc0b491f3eab5807d216bb96db2436da845ed0ea6e4ec69daf6182873836
+
+# Convert split into normalized contracts (samples.jsonl, labels.jsonl, evaluation_manifest.json, report.json)
+retailgraph convert-retail-action --source data/raw/retail_action/data/validation.tar \
+  --expected-sha256 1287dc0b491f3eab5807d216bb96db2436da845ed0ea6e4ec69daf6182873836 \
+  --output-dir data/processed/retail_action/validation
 ```
 
-The RetailAction manifest includes archive entries with `null` digests that deliberately fail
-closed until trusted hashes are obtained from an immutable official revision. The other starter
-manifest requires only an upstream README until exact released files/checksums are pinned. A successful manifest check means only that declared local files
-exist and match any declared checksums—not that acquisition, licensing, or upstream schema was
-validated. See [dataset notes](docs/datasets.md) before writing converters.
+Complete archive conversion is fail-closed: the requested digest must be the trusted digest pinned
+for that split and must match the archive's chunked SHA-256. The report records the expected and
+actual digests and verification status. `--max-samples` remains an inspection-only partial run and
+never creates an evaluation manifest eligible for benchmark evaluation.
+
+See [RetailAction source verification log](docs/retail_action_source_verification.md) and [dataset registry](docs/datasets.md) for detailed schema inspection notes.
 
 ## Layout
 
 - `src/retailgraph/schema`: strict, versioned normalized contracts and coordinate conversions.
-- `src/retailgraph/data`: normalized JSONL adapters, authoritative evaluation manifests, and group leakage checks.
-- `src/retailgraph/evaluation`: separate gaze and simple action-event evaluation.
+- `src/retailgraph/data`: normalized JSONL adapters, verified source converters, evaluation manifests, and leakage checks.
+- `src/retailgraph/evaluation`: separate gaze and simple action-event evaluation with strict validation.
 - `src/retailgraph/baselines`: deterministic contract smoke predictors (not scientific baselines).
-- `configs`: reviewable examples and initial manifests.
+- `configs`: reviewable examples and pinned dataset manifests.
 - `tests/fixtures`: synthetic metadata only; no dataset imagery/video.
 - `docs`: architecture, dataset caveats, source verification, experiments, and roadmap.
 
 ## Next work
 
-1. Unblock official-source access, pin the immutable RetailAction revision, inspect the smallest
-   metadata artifact, and implement a strict converter only for directly verified fields.
-2. Reproduce each published/reference baseline and the confirmed RetailAction official protocol
-   before evaluating new models.
-3. Implement leakage-safe dataset indices and real single-track baselines with per-class/grouped
-   reporting, seeds, runtime, hardware, dataset revision, and uncertainty outputs.
+1. Implement official spatio-temporal mAP evaluation for RetailAction matching published protocol (spatial meter-normalization via pose bone lengths or fallback factor).
+2. Reproduce each published/reference baseline on RetailAction and Retail Gaze before evaluating new models.
+3. Implement leakage-safe dataset indices and real single-track baselines with per-class/grouped reporting, seeds, runtime, hardware, dataset revision, and uncertainty outputs.
 
 ## Licensing
 
 No software license has been selected; `LICENSE` reserves all rights pending owner review. This
 does not grant rights to either dataset. RetailAction's custom terms require review for the
-intended use; the Retail Gaze listing/repository showed no explicit license at foundation time.
+intended use; commercial deployment generating >$10k revenue requires an express license from
+Standard Cognition Corp. The Retail Gaze listing/repository showed no explicit license at foundation time.
 Public-dataset research artifacts must remain distinct from future commercially deployable data
 and weights. Never assume commercial usability without verified permission.
