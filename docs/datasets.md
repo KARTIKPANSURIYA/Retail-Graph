@@ -2,94 +2,54 @@
 
 ## Verification status (2026-09-24)
 
-The official pages below were identified, but this setup environment received HTTP 401/403 from
-its web gateway and direct official requests. Consequently, no upstream files, media, schemas,
-checksums, exact split cardinalities, or annotation keys were verified locally. The normalized
-JSONL fixture format is **our contract**, not a claim about upstream APIs. Before real use, pin a
-revision, save its dataset card/README, inspect actual metadata, update the manifests, and build a
-source-specific converter with golden tests. Never infer a missing field.
+- **RetailAction:** Verified against official upstream Hugging Face repository at pinned immutable commit SHA `49cb590723db921a4bd5a38adea92f6abd3f7a00`. Dataset card, LICENSE, repository tree, and `data/validation.tar` (1,277 samples, 1,246 action instances, 126 zero-action samples) were downloaded and inspected. A strict verified converter (`src/retailgraph/data/retail_action_source.py`) and CLI command (`retailgraph convert-retail-action`) are implemented. See [RetailAction source verification log](retail_action_source_verification.md) for full inspection details.
+- **Retail Gaze:** The official pages were identified (<https://huggingface.co/datasets/Voxel51/retail_gaze>), but upstream raw data remains unverified in this repository. Gaze evaluation validation was tightened to reject duplicate prediction IDs, duplicate ground-truth samples, extra out-of-scope predictions, and non-gaze prediction types, while reporting missing predictions and abstentions transparently.
+
+---
 
 ## RetailAction
 
 - Dataset: <https://huggingface.co/datasets/standard-cognition/RetailAction>
+- Pinned commit SHA: `49cb590723db921a4bd5a38adea92f6abd3f7a00`
 - Paper: <https://openaccess.thecvf.com/content/ICCV2025W/RetailVision/html/Mazzini_RetailAction_Dataset_for_Multi-View_Spatio-Temporal_Localization_of_Human-Object_Interactions_in_ICCVW_2025_paper.html>
-- Scope supplied by the project brief: multi-view spatial/temporal `take`, `put`, `touch`, with
-  pose metadata where supplied. Classes are imbalanced.
+- License: Standard.AI Dataset License (custom terms: attribution, deidentification, commercial revenue threshold >$10k requires express license from Standard Cognition Corp.).
+- Scope: Multi-view spatial/temporal `take`, `put`, `touch`. Imbalanced classes (`take` dominates at >97%).
+- Cameras: Two ceiling-mounted cameras (`rank0` and `rank1`) per sample.
+- Sample format: Each sample directory contains `rank0_video.mp4`, `rank1_video.mp4`, and `metadata.json`.
 
-**Split/evaluation rule:** ingest the released/published split mapping verbatim—never randomize
-frames, clips, or views—and record its revision. Synchronized views and adjacent frames remain
-in one split. Report each class plus macro aggregates and counts. The exact published split
-cardinalities and official spatio-temporal matching/mAP conventions remain a tracked verification
-task because source access failed; the repository refuses to impersonate them. The implemented
-metric is only greedy same-class temporal-IoU event precision/recall and ignores spatial quality.
+**Split/evaluation rule:** Ingest the released split mapping verbatim (`train`: 17,222 samples, `validation`: 1,277 samples, `test`: 2,501 samples). Synchronized views and adjacent frames remain together in one split. The complete evaluation sample manifest must be derived from archive directory entries to include all zero-action samples (126 zero-action samples in `validation.tar`).
 
-RetailAction uses custom terms; review them for research, redistribution, trained weights, and
-commercial intent before acquisition/use. The terms are not replaced by this repository license.
+**Converter integrity rule:** Complete archive conversion requires the trusted split digest from
+`configs/retail_action_manifest.yaml`; SHA-256 is computed in bounded chunks and the conversion
+report records the expected digest, actual digest, and verification status. The converter rejects
+missing `rank0`/`rank1` metadata or video members, missing required camera/action metadata, invalid
+spatial-view keys, duplicate sample IDs, and archive/member split disagreement. Errors identify the
+sample and archive member. A `--max-samples` run is partial, writes only
+`inspection_subset.json`, and is ineligible for benchmark evaluation. Output publication is
+transactional, and a failed rerun invalidates any stale complete evaluation manifest.
+
+---
 
 ## Retail Gaze
 
 - Dataset: <https://huggingface.co/datasets/Voxel51/retail_gaze>
 - Original repository: <https://github.com/PrimeshShamilka/RetailGazeDataset>
-- Scope supplied by the project brief: third-person imagery, head box, gaze target, and product or
-  shelf-region/mask information when present.
+- Scope: Third-person imagery, head box, gaze target, and optional shelf-region/mask annotations.
+- Evaluation policy: Must group by subject and session, never by random image/frame.
+- Evaluation validation: `evaluate_gaze` strictly rejects duplicate ground-truth sample IDs, duplicate prediction records, duplicate prediction IDs, and predictions outside the evaluated sample set. Non-gaze prediction types raise `ValueError`. Missing predictions and explicit abstentions (`AttentionType.UNKNOWN`) are counted and reported transparently.
 
-Evaluation must group by subject **and** session, never by random image/frame. Scripted gaze,
-the small subject count, and capture-domain constraints limit external validity and generalization.
-The exact upstream subject/session field names and official splits remain unverified: a converter
-must fail rather than substitute filename guesses. The listing/repository showed no explicit
-license at foundation time; treat reuse, redistribution, weights, and commercial use as unresolved.
+---
 
-## Local normalized metadata
+## Schema adjustments and migrations
 
-`VideoSample` records provenance, split, optional store/subject/session, dimensions, FPS, time
-offset, and synchronization group. RetailAction labels contain half-open time intervals and a
-normalized point per available view. Retail Gaze labels contain a pixel head box, normalized gaze
-target, and optional mask reference/region. Coordinates use top-left origin, x rightward/y
-downward, normalized endpoints `[0,1]`; pixel boxes are half-open. Paths may be relative to a
-configured data root. Mask loading/point-in-mask semantics await verified upstream formats.
+### CameraView: Optional video dimension and FPS fields (Schema 1.0 -> 1.1 backward-compatible)
+Upstream RetailAction `metadata.json` does not contain video dimensions (`width`, `height`) or `fps`. In order to support ingestion directly from TAR archives without forcing full video extraction or guessing unverified values, `CameraView.width`, `CameraView.height`, and `CameraView.fps` were updated to allow `None` with `default=None`. Existing records specifying integer dimensions remain 100% valid under schema 1.x.
 
-## Normalized action schema migration: 1.x to 2.0
+### Normalized action schema migration: 1.x to 2.0
+Action schema 1.x omitted `sample_id`, so it cannot be safely evaluated and is rejected rather than silently reinterpreted. Version 2.0 requires explicit `schema_version: "2.0"` and `sample_id` on every `RetailActionLabel`. Prediction schema 2.0 likewise requires explicit `schema_version: "2.0"`; action predictions additionally require a unique `prediction_id`.
 
-Action schema 1.x omitted `sample_id`, so it cannot be safely evaluated and is rejected rather than
-silently reinterpreted. Version 2.0 requires explicit `schema_version: "2.0"` and `sample_id` on
-every `RetailActionLabel`. Prediction schema 2.0 likewise requires explicit `schema_version: "2.0"`; action predictions
-additionally require a unique `prediction_id`.
-Migration requires joining each old event to the authoritative video/sample index; there is no
-safe default. If that mapping is unavailable, discard and regenerate the normalized metadata.
-Retail Gaze records remain on schema 1.x.
-
-See [the source verification log](retail_action_source_verification.md) for the blocked revision pin
-and the exact ingestion gate. No upstream converter exists until actual source structure is verified.
-
+---
 
 ## Action evaluation manifests
 
-A normalized `ActionEvaluationManifest` records the dataset revision, split, and authoritative
-list of every evaluated sample. It must include zero-action videos; deriving this universe from
-action labels is prohibited. Duplicate sample IDs are rejected. Labels or predictions outside the
-manifest are evaluation errors, while action predictions on an in-scope zero-action sample count
-as false positives.
-
-## RetailAction archive preflight
-
-Until the upstream revision and source schema are verified, only fail-closed archive preflight is
-available:
-
-```bash
-retailgraph retail-action-preflight \
-  --archive data/raw/retail_action/data/validation.tar \
-  --manifest configs/retail_action_manifest.yaml \
-  --split validation \
-  --output outputs/retail_action_validation
-```
-
-Benchmark preflight requires the expected SHA-256 from the versioned manifest; a missing or wrong
-digest fails. `--inspection-only` may calculate and report an untrusted local digest but never
-creates an evaluation manifest or benchmark-eligible artifacts. `report.json` records `archive`,
-`split`, `expected_sha256`, `actual_sha256`, `verification_status`, `conversion_status`,
-`inspection_only`, and `message`. Output is replaced transactionally, so failure removes stale
-`evaluation_manifest.json` or normalized labels from a prior run.
-
-Once a converter exists, a complete official validation report is expected to be checked—never
-forced—against 1,277 samples, 126 zero-action samples, and 1,246 actions: 1,215 `take`, 26 `put`, and
-5 `touch`. These expectations came from the task specification and have not been observed locally.
+A normalized `ActionEvaluationManifest` records the dataset revision, split, and authoritative list of every evaluated sample. It must include zero-action videos; deriving this universe from action labels alone is prohibited. Duplicate sample IDs are rejected. Labels or predictions outside the manifest are evaluation errors, while action predictions on an in-scope zero-action sample count as false positives.
