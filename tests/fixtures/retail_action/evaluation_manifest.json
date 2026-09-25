@@ -2,5 +2,6 @@
   "schema_version": "1.0",
   "dataset_version": "synthetic-v1",
   "split": "test",
-  "sample_ids": ["synthetic-video-1", "synthetic-video-2", "synthetic-empty-video"]
+  "sample_ids": ["synthetic-video-1", "synthetic-video-2", "synthetic-empty-video"],
+  "complete": true
 }
