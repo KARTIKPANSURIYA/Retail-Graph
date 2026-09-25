@@ -66,6 +66,17 @@ def _make_synthetic_sample_metadata(
         }
     }
 
+    assert len(labels) == 1
+    lbl = labels[0]
+    assert lbl.schema_version == "2.0"
+    assert lbl.sample_id == "synth-001"
+    assert lbl.action == ActionClass.TAKE
+    assert lbl.interval.start_s == pytest.approx(2.0)
+    assert lbl.interval.end_s == pytest.approx(8.0)
+    assert len(lbl.points) == 2
+    pt_map = {p.view_id: (p.point.x, p.point.y) for p in lbl.points}
+    assert pt_map["rank0"] == (0.25, 0.35)
+    assert pt_map["rank1"] == (0.65, 0.75)
 
 def test_convert_single_take_sample() -> None:
     raw = _make_synthetic_sample_metadata(
@@ -91,6 +102,34 @@ def test_convert_single_take_sample() -> None:
         split=Split.VALIDATION,
         revision=PINNED_DATASET_REVISION,
     )
+    assert sample.sample_id == "synth-multi"
+    assert len(labels) == 2
+    assert labels[0].action == ActionClass.PUT
+    assert labels[0].interval.start_s == pytest.approx(1.0)
+    assert labels[0].interval.end_s == pytest.approx(3.0)
+    assert labels[1].action == ActionClass.TOUCH
+    assert labels[1].interval.start_s == pytest.approx(5.0)
+    assert labels[1].interval.end_s == pytest.approx(9.0)
+
+
+def _create_synthetic_tar(archive_path: Path, samples_data: dict[str, dict[str, Any]]) -> None:
+    """Create a synthetic TAR archive with multiple sample directories."""
+    with tarfile.open(archive_path, "w") as tar:
+        for entry_path, data in samples_data.items():
+            payload_bytes = json.dumps(data).encode("utf-8")
+            ti = tarfile.TarInfo(name=entry_path)
+            ti.size = len(payload_bytes)
+            tar.addfile(ti, io.BytesIO(payload_bytes))
+            sample_dir = entry_path.rsplit("/", 1)[0]
+            for view_id in ("rank0", "rank1"):
+                video = tarfile.TarInfo(name=f"{sample_dir}/{view_id}_video.mp4")
+                video.size = 0
+                tar.addfile(video, io.BytesIO())
+
+
+def _trust_synthetic_archive(archive_path: Path) -> str:
+    """Pin a generated fixture digest for a complete synthetic conversion."""
+    import hashlib
 
     assert sample.sample_id == "synth-001"
     assert sample.provenance.split == Split.VALIDATION
@@ -114,6 +153,53 @@ def test_convert_single_take_sample() -> None:
     assert pt_map["rank0"] == (0.25, 0.35)
     assert pt_map["rank1"] == (0.65, 0.75)
 
+def test_convert_synthetic_tar_archive(tmp_path: Path) -> None:
+    tar_path = tmp_path / "validation.tar"
+    samples_data = {
+        "validation/000001/metadata.json": _make_synthetic_sample_metadata(
+            [
+                {
+                    "label": "take",
+                    "start": 0.1,
+                    "end": 0.5,
+                    "spatial": {
+                        "action_cam": {
+                            "rank0": {"x": 0.2, "y": 0.3},
+                            "rank1": {"x": 0.4, "y": 0.5},
+                        }
+                    },
+                }
+            ]
+        ),
+        "validation/000002/metadata.json": _make_synthetic_sample_metadata([]),  # zero action
+        "validation/000003/metadata.json": _make_synthetic_sample_metadata(
+            [
+                {
+                    "label": "put",
+                    "start": 0.2,
+                    "end": 0.4,
+                    "spatial": {
+                        "action_cam": {
+                            "rank0": {"x": 0.1, "y": 0.2},
+                            "rank1": {"x": 0.3, "y": 0.4},
+                        }
+                    },
+                },
+                {
+                    "label": "touch",
+                    "start": 0.6,
+                    "end": 0.8,
+                    "spatial": {
+                        "action_cam": {
+                            "rank0": {"x": 0.5, "y": 0.6},
+                            "rank1": {"x": 0.7, "y": 0.8},
+                        }
+                    },
+                },
+            ]
+        ),
+    }
+    _create_synthetic_tar(tar_path, samples_data)
 
 def test_convert_zero_action_sample() -> None:
     raw = _make_synthetic_sample_metadata([])
